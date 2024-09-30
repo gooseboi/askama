@@ -25,9 +25,6 @@ impl<'a> Config<'a> {
         s: &'a str,
         template_whitespace: Option<&str>,
     ) -> std::result::Result<Config<'a>, CompileError> {
-        let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-        let default_dirs = vec![root.join("templates")];
-
         let mut syntaxes = BTreeMap::new();
         syntaxes.insert(DEFAULT_SYNTAX_NAME.to_string(), Syntax::default());
 
@@ -37,22 +34,23 @@ impl<'a> Config<'a> {
             RawConfig::from_toml_str(s)?
         };
 
-        let (dirs, default_syntax, mut whitespace) = match raw.general {
+        let (dirs, default_syntax, mut whitespace, generated) = match &raw.general {
             Some(General {
                 dirs,
                 default_syntax,
                 whitespace,
+                generated,
             }) => (
-                dirs.map_or(default_dirs, |v| {
-                    v.into_iter().map(|dir| root.join(dir)).collect()
-                }),
+                dirs.as_deref().unwrap_or(DEFAULT_DIRS),
                 default_syntax.unwrap_or(DEFAULT_SYNTAX_NAME),
-                whitespace,
+                *whitespace,
+                *generated,
             ),
             None => (
-                default_dirs,
+                DEFAULT_DIRS,
                 DEFAULT_SYNTAX_NAME,
                 WhitespaceHandling::default(),
+                false,
             ),
         };
         if let Some(template_whitespace) = template_whitespace {
@@ -98,8 +96,16 @@ impl<'a> Config<'a> {
             escapers.push((str_set(extensions), format!("{CRATE}{path}")));
         }
 
+        let base = PathBuf::from(
+            env::var(match generated {
+                false => "CARGO_MANIFEST_DIR",
+                true => "OUT_DIR",
+            })
+            .unwrap(),
+        );
+
         Ok(Config {
-            dirs,
+            dirs: dirs.iter().map(|dir| base.join(dir)).collect(),
             syntaxes,
             default_syntax,
             escapers,
@@ -238,6 +244,8 @@ struct General<'a> {
     dirs: Option<Vec<&'a str>>,
     default_syntax: Option<&'a str>,
     #[cfg_attr(feature = "serde", serde(default))]
+    generated: bool,
+    #[cfg_attr(feature = "serde", serde(default))]
     whitespace: WhitespaceHandling,
 }
 
@@ -302,6 +310,7 @@ pub(crate) fn get_template_source(tpl_path: &Path) -> std::result::Result<String
 }
 
 static CONFIG_FILE_NAME: &str = "askama.toml";
+const DEFAULT_DIRS: &[&str] = &["templates"];
 static DEFAULT_SYNTAX_NAME: &str = "default";
 static DEFAULT_ESCAPERS: &[(&[&str], &str)] = &[
     (&["html", "htm", "svg", "xml"], "::Html"),
